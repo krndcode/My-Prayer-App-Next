@@ -83,3 +83,5 @@ Calls start from the audio/video controls in a group chat and use public STUN se
 ## Verification
 
 Run `npm test`, `npm run lint`, and `npm run build`. Deploy the current Firestore rules and indexes before using the Firestore-backed features. The schedule invitation collection-group query depends on the recursive invitations read rule in `firestore.rules`.
+#   M y - P r a y e r - A p p - N e x t  
+ 
