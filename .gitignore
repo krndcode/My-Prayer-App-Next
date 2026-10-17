@@ -1,0 +1,12 @@
+node_modules/
+.next/
+out/
+build/
+.env
+.env.*
+!.env.local.example
+my-prayer-line-20261016-*.json
+*.log
+firebase-debug.log
+firestore-debug.log
+ui-debug.log

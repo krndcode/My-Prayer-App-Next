@@ -1,0 +1,28 @@
+{
+  "name": "my-prayer-line",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "test": "node --test src/lib/schedule-recurrence.test.mjs functions/src/schedule-recurrence.test.js"
+  },
+  "dependencies": {
+    "firebase": "^13.0.0",
+    "firebase-admin": "14.5.0",
+    "next": "16.4.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.3",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.4.2",
+    "tailwindcss": "4.3.3"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "1.14.6"
+  }
+}
