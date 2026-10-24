@@ -54,6 +54,15 @@ export default function HeatRoomWorkspace() {
   const [kind, setKind] = useState("prayer");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // Mobile only: the composer is collapsed by default so the feed stays within reach.
+  const [composerOpen, setComposerOpen] = useState(false);
+
+  // Success messages fade away on their own so they never sit over content on small screens.
+  useEffect(() => {
+    if (!notice) return undefined;
+    const timer = setTimeout(() => setNotice(""), 5000);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   useEffect(() => {
     if (!user) return undefined;
@@ -252,6 +261,7 @@ export default function HeatRoomWorkspace() {
       }
       await batch.commit();
       formElement.reset();
+      setComposerOpen(false);
       setNotice(anonymous ? "Your anonymous prayer request was shared." : "Your post was shared.");
     } catch (postError) {
       setError(describeError(postError));
@@ -282,15 +292,19 @@ export default function HeatRoomWorkspace() {
   if (!user) return <Notice>Please sign in again to open the Heat Room.</Notice>;
 
   return (
-    <div>
+    <div className="min-w-0">
       <PageHeading
         eyebrow="Community care"
         title="The Heat Room"
         description="A place to carry prayer requests together and celebrate what God is doing."
       />
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_300px]">
-        <div className="space-y-4">
+      {/*
+        Mobile order: composer, feed, reminder.
+        xl and up: feed on the left (spanning both rows), composer and reminder stacked on the right.
+      */}
+      <div className="grid grid-cols-1 items-start gap-5 sm:gap-6 xl:grid-cols-[minmax(0,1fr)_300px] xl:grid-rows-[auto_1fr]">
+        <div className="order-2 min-w-0 space-y-4 xl:order-1 xl:row-span-2">
           {visiblePosts.length === 0 ? (
             <Panel>
               <EmptyState
@@ -312,18 +326,34 @@ export default function HeatRoomWorkspace() {
           )}
         </div>
 
-        <aside className="space-y-5">
-          <Panel>
-            <h2 className="text-lg font-semibold">Share with care</h2>
-            <p className="mt-1 text-sm leading-6 text-slate-600">
-              Prayer requests and testimonies can be shared publicly, with a group, or privately with you.
-            </p>
+        <Panel className="order-1 min-w-0 xl:order-2">
+          <h2 className="text-lg font-semibold">Share with care</h2>
+          <p className="mt-1 text-sm leading-6 text-slate-600">
+            Prayer requests and testimonies can be shared publicly, with a group, or privately with you.
+          </p>
+
+          {/* Phones and tablets: tap to open the composer. Hidden on xl, where the form is always visible. */}
+          <button
+            type="button"
+            aria-expanded={composerOpen}
+            aria-controls="heat-composer"
+            onClick={() => setComposerOpen((value) => !value)}
+            className={`mt-4 flex min-h-11 w-full items-center justify-center rounded-xl px-4 text-sm font-semibold transition xl:hidden ${
+              composerOpen
+                ? "border border-slate-200 bg-white text-slate-700"
+                : "bg-teal-800 text-white hover:bg-teal-900"
+            }`}
+          >
+            {composerOpen ? "Close" : "Share a prayer or testimony"}
+          </button>
+
+          <div id="heat-composer" className={`${composerOpen ? "block" : "hidden"} xl:block`}>
             <div className="mt-5 flex gap-2">
               <button
                 type="button"
                 aria-pressed={kind === "prayer"}
                 onClick={() => setKind("prayer")}
-                className={`flex-1 rounded-xl px-3 py-2 text-sm font-semibold ${kind === "prayer" ? "bg-teal-800 text-white" : "bg-slate-100 text-slate-700"}`}
+                className={`min-h-11 flex-1 rounded-xl px-2 py-2 text-center text-sm font-semibold leading-tight sm:px-3 ${kind === "prayer" ? "bg-teal-800 text-white" : "bg-slate-100 text-slate-700"}`}
               >
                 Prayer request
               </button>
@@ -331,7 +361,7 @@ export default function HeatRoomWorkspace() {
                 type="button"
                 aria-pressed={kind === "testimony"}
                 onClick={() => setKind("testimony")}
-                className={`flex-1 rounded-xl px-3 py-2 text-sm font-semibold ${kind === "testimony" ? "bg-teal-800 text-white" : "bg-slate-100 text-slate-700"}`}
+                className={`min-h-11 flex-1 rounded-xl px-2 py-2 text-center text-sm font-semibold leading-tight sm:px-3 ${kind === "testimony" ? "bg-teal-800 text-white" : "bg-slate-100 text-slate-700"}`}
               >
                 Testimony
               </button>
@@ -366,8 +396,8 @@ export default function HeatRoomWorkspace() {
               </label>
               {kind === "prayer" && (
                 <label className="flex items-start gap-3 rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
-                  <input type="checkbox" name="anonymous" className="mt-1 accent-teal-800" />
-                  <span>
+                  <input type="checkbox" name="anonymous" className="mt-1 size-4 shrink-0 accent-teal-800" />
+                  <span className="min-w-0">
                     Share anonymously
                     <span className="mt-1 block text-xs leading-5 text-slate-500">
                       Your name is hidden from readers. Only your private account can access the moderation identity.
@@ -379,19 +409,19 @@ export default function HeatRoomWorkspace() {
                 {posting ? "Sharing…" : kind === "prayer" ? "Share prayer request" : "Share testimony"}
               </PrimaryButton>
             </form>
-          </Panel>
+          </div>
+        </Panel>
 
-          <Panel className="border-sky-100 bg-sky-50/60">
-            <h2 className="text-sm font-semibold">A gentle reminder</h2>
-            <p className="mt-2 text-sm leading-6 text-slate-600">
-              Avoid posting passwords, financial information, or details that could put you or someone else at risk.
-            </p>
-          </Panel>
-        </aside>
+        <Panel className="order-3 min-w-0 border-sky-100 bg-sky-50/60">
+          <h2 className="text-sm font-semibold">A gentle reminder</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Avoid posting passwords, financial information, or details that could put you or someone else at risk.
+          </p>
+        </Panel>
       </div>
 
       {(error || notice) && (
-        <div className="fixed bottom-24 right-4 z-40 w-[min(92vw,420px)] lg:bottom-6">
+        <div className="fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] left-4 right-4 z-40 sm:left-auto sm:w-[420px] lg:bottom-6">
           <Notice tone={error ? "error" : "success"}>{error || notice}</Notice>
         </div>
       )}
@@ -488,7 +518,7 @@ function PostCard({ post, user, isOwner, onDelete, onError }) {
   const audience = post.audience === "public" ? "Community" : post.audience === "group" ? "Group members" : "Private";
   return (
     <Panel>
-      <article>
+      <article className="min-w-0">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-teal-100 text-sm font-semibold text-teal-900">
@@ -498,12 +528,12 @@ function PostCard({ post, user, isOwner, onDelete, onError }) {
               <p className="truncate text-sm font-semibold text-slate-900">
                 {post.anonymous ? "Anonymous community member" : post.authorName || "Community member"}
               </p>
-              <p className="mt-0.5 text-xs text-slate-500">
+              <p className="mt-0.5 text-xs leading-5 text-slate-500">
                 {post.type === "testimonies" ? "Testimony" : "Prayer request"} · {formatDate(post.createdAt)}
               </p>
             </div>
           </div>
-          <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600">
+          <span className="shrink-0 whitespace-nowrap rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600">
             {audience}
           </span>
         </div>
@@ -519,11 +549,11 @@ function PostCard({ post, user, isOwner, onDelete, onError }) {
             {showComments ? "Hide replies" : "Encourage"}
           </SecondaryButton>
           {isOwner ? (
-            <button type="button" onClick={onDelete} className="ml-auto text-xs font-medium text-slate-500 hover:text-red-700">
+            <button type="button" onClick={onDelete} className="-mr-2 ml-auto inline-flex min-h-11 items-center px-2 text-xs font-medium text-slate-500 hover:text-red-700">
               Remove post
             </button>
           ) : (
-            <button type="button" onClick={reportPost} className="ml-auto text-xs font-medium text-slate-500 hover:text-red-700">
+            <button type="button" onClick={reportPost} className="-mr-2 ml-auto inline-flex min-h-11 items-center px-2 text-xs font-medium text-slate-500 hover:text-red-700">
               Report
             </button>
           )}
@@ -535,10 +565,10 @@ function PostCard({ post, user, isOwner, onDelete, onError }) {
               {comments.map((entry) => (
                 <div key={entry.id} className="rounded-xl bg-slate-50 px-3 py-2.5">
                   <div className="flex items-baseline justify-between gap-2">
-                    <p className="text-xs font-semibold text-slate-800">{entry.authorName}</p>
-                    <time className="text-[10px] text-slate-400">{formatDate(entry.createdAt)}</time>
+                    <p className="min-w-0 truncate text-xs font-semibold text-slate-800">{entry.authorName}</p>
+                    <time className="shrink-0 text-[10px] text-slate-400">{formatDate(entry.createdAt)}</time>
                   </div>
-                  <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-slate-700">{entry.text}</p>
+                  <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-5 text-slate-700">{entry.text}</p>
                 </div>
               ))}
               {comments.length === 0 && <p className="text-xs text-slate-500">Be the first to offer encouragement.</p>}
@@ -553,7 +583,7 @@ function PostCard({ post, user, isOwner, onDelete, onError }) {
                 value={comment}
                 onChange={(event) => setComment(event.target.value)}
               />
-              <PrimaryButton type="submit" disabled={savingComment || !comment.trim()}>
+              <PrimaryButton type="submit" disabled={savingComment || !comment.trim()} className="shrink-0">
                 {savingComment ? "…" : "Reply"}
               </PrimaryButton>
             </form>

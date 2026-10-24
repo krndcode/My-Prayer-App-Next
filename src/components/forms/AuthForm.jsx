@@ -69,10 +69,33 @@ async function createSession(idToken) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ idToken })
   });
-  const result = await response.json();
+  const responseBody = await response.text();
+  let result = null;
+
+  if (responseBody.trim()) {
+    try {
+      result = JSON.parse(responseBody);
+    } catch {
+      throw new Error(
+        `The sign-in service returned an unexpected response (HTTP ${response.status}). ` +
+          "Check the Vercel deployment and function logs."
+      );
+    }
+  }
 
   if (!response.ok) {
-    throw new Error(result.error || "Unable to create a secure session.");
+    throw new Error(
+      result?.error ||
+        `Unable to create a secure session (HTTP ${response.status}). ` +
+          "Check the Firebase Admin environment variables and Vercel function logs."
+    );
+  }
+
+  if (result?.authenticated !== true) {
+    throw new Error(
+      `The sign-in service returned an empty response (HTTP ${response.status}). ` +
+        "Check the Vercel deployment and function logs."
+    );
   }
 }
 

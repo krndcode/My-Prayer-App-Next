@@ -1,0 +1,186 @@
+[1mdiff --git a/.env.local.example b/.env.local.example[m
+[1mindex 3ab70b0..c3b4020 100644[m
+[1m--- a/.env.local.example[m
+[1m+++ b/.env.local.example[m
+[36m@@ -9,4 +9,8 @@[m [mNEXT_PUBLIC_FIREBASE_VAPID_KEY=your-web-push-vapid-public-key[m
+ NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY=your-recaptcha-v3-site-key[m
+ [m
+ FIREBASE_ADMIN_PROJECT_ID=my-prayer-line-20261016[m
+[32m+[m[32m# For Vercel, set these from a Firebase service account in Project Settings.[m
+[32m+[m[32m# FIREBASE_CLIENT_EMAIL=your-service-account-email[m
+[32m+[m[32m# FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nreplace-with-service-account-private-key\n-----END PRIVATE KEY-----\n"[m
+[32m+[m[32m# For local development, GOOGLE_APPLICATION_CREDENTIALS can point to a service-account JSON file instead.[m
+ GOOGLE_APPLICATION_CREDENTIALS=path/to/service-account-key.json[m
+[1mdiff --git a/firestore.rules b/firestore.rules[m
+[1mindex d05c169..b91e562 100644[m
+[1m--- a/firestore.rules[m
+[1m+++ b/firestore.rules[m
+[36m@@ -2,730 +2,30 @@[m [mrules_version = '2';[m
+ [m
+ service cloud.firestore {[m
+   match /databases/{database}/documents {[m
+[31m-    function signedIn() {[m
+[31m-      return request.auth != null;[m
+[32m+[m[41m    [m
+[32m+[m[32m    // User Profiles[m
+[32m+[m[32m    match /users/{userId} {[m
+[32m+[m[32m      allow read, write: if request.auth != null && request.auth.uid == userId;[m
+     }[m
+[31m-[m
+[31m-    function isUser(uid) {[m
+[31m-      return signedIn() && request.auth.uid == uid;[m
+[31m-    }[m
+[31m-[m
+[31m-    function groupPath(groupId) {[m
+[31m-      return /databases/$(database)/documents/prayerGroups/$(groupId);[m
+[31m-    }[m
+[31m-[m
+[31m-    function memberPath(groupId, uid) {[m
+[31m-      return /databases/$(database)/documents/prayerGroups/$(groupId)/members/$(uid);[m
+[31m-    }[m
+[31m-[m
+[31m-    function invitationPath(scheduleId, uid) {[m
+[31m-      return /databases/$(database)/documents/prayerSchedules/$(scheduleId)/invitations/$(uid);[m
+[31m-    }[m
+[31m-[m
+[31m-    function isGroupMember(groupId) {[m
+[31m-      return signedIn() && exists(memberPath(groupId, request.auth.uid));[m
+[31m-    }[m
+[31m-[m
+[31m-    function isGroupAdmin(groupId) {[m
+[31m-      return isGroupMember(groupId)[m
+[31m-        && get(memberPath(groupId, request.auth.uid)).data.role == 'admin';[m
+[31m-    }[m
+[31m-[m
+[31m-    function postPath(collectionName, postId) {[m
+[31m-      return /databases/$(database)/documents/$(collectionName)/$(postId);[m
+[31m-    }[m
+[31m-[m
+[31m-    function identityPath(collectionName, postId) {[m
+[31m-      return /databases/$(database)/documents/$(collectionName)/$(postId)/moderation/identity;[m
+[31m-    }[m
+[31m-[m
+[31m-    function isPostOwner(collectionName, postId, post) {[m
+[31m-      return signedIn()[m
+[31m-        && (post.get('authorUid', '') == request.auth.uid[m
+[31m-          || (exists(identityPath(collectionName, postId))[m
+[31m-            && get(identityPath(collectionName, postId)).data.uid == request.auth.uid));[m
+[31m-    }[m
+[31m-[m
+[31m-    function canReadPost(collectionName, postId, post) {[m
+[31m-      return signedIn()[m
+[31m-        && post.status == 'active'[m
+[31m-        && (post.audience == 'public'[m
+[31m-          || isPostOwner(collectionName, postId, post)[m
+[31m-          || (post.audience == 'group' && isGroupMember(post.groupId)));[m
+[31m-    }[m
+[31m-[m
+[31m-    function validProfile(data, uid) {[m
+[31m-      return data.keys().hasOnly([[m
+[31m-          'uid',[m
+[31m-          'email',[m
+[31m-          'displayName',[m
+[31m-          'photoURL',[m
+[31m-          'bio',[m
+[31m-          'phoneNumber',[m
+[31m-          'notificationPreferences',[m
+[31m-          'privacyPreferences',[m
+[31m-          'createdAt',[m
+[31m-          'updatedAt'[m
+[31m-        ])[m
+[31m-        && data.keys().hasAll(['uid', 'email', 'displayName', 'photoURL', 'createdAt', 'updatedAt'])[m
+[31m-        && data.uid == uid[m
+[31m-        && data.email is string[m
+[31m-        && data.email == request.auth.token.email[m
+[31m-        && data.email.size() <= 254[m
+[31m-        && data.displayName is string[m
+[31m-        && data.displayName.size() > 0[m
+[31m-        && data.displayName.size() <= 80[m
+[31m-        && (data.photoURL == null || (data.photoURL is string && data.photoURL.size() <= 2048))[m
+[31m-        && (!('bio' in data) || (data.bio is string && data.bio.size() <= 500))[m
+[31m-        && (!('phoneNumber' in data) || (data.phoneNumber is string && data.phoneNumber.size() <= 32))[m
+[31m-        && (!('notificationPreferences' in data)[m
+[31m-          || (data.notificationPreferences is map[m
+[31m-            && data.notificationPreferences.keys().hasOnly([[m
+[31m-              'groupActivity',[m
+[31m-              'scheduleReminders',[m
+[31m-              'prayerEncouragement'[m
+[31m-            ])[m
+[31m-            && (!('groupActivity' in data.notificationPreferences)[m
+[31m-              || data.notificationPreferences.groupActivity is bool)[m
+[31m-            && (!('scheduleReminders' in data.notificationPreferences)[m
+[31m-              || data.notificationPreferences.scheduleReminders is bool)[m
+[31m-            && (!('prayerEncouragement' in data.notificationPreferences)[m
+[31m-              || data.notificationPreferences.prayerEncouragement is bool)))[m
+[31m-        && (!('privacyPreferences' in data)[m
+[31m-          || (data.privacyPreferences is map[m
+[31m-            && data.privacyPreferences.keys().hasOnly(['defaultPostAudience'])[m
+[31m-            && (!('defaultPostAudience' in data.privacyPreferences)[m
+[31m-              || data.privacyPreferences.defaultPostAudience in ['public', 'private'])));[m
+[31m-    }[m
+[31m-[m
+[31m-    function validGroup(data) {[m
+[31m-      return data.keys().hasOnly([[m
+[31m-          'name',[m
+[31m-          'description',[m
+[31m-          'creatorUid',[m
+[31m-          'creatorName',[m
+[31m-          'visibility',[m
+[31m-          'memberCount',[m
+[31m-          'createdAt',[m
+[31m-          'updatedAt'[m
+[31m-        ])[m
+[31m-        && data.keys().hasAll([[m
+[31m-          'name',[m
+[31m-          'description',[m
+[31m-          'creatorUid',[m
+[31m-          'creatorName',[m
+[31m-          'visibility',[m
+[31m-          'memberCount',[m
+[31m-          'createdAt',[m
+[31m-          'updatedAt'[m
+[31m-        ])[m
+[31m-        && data.name is string[m
+[31m-        && data.name.size() > 0[m
+[31m-        && data.name.size() <= 80[m
+[31m-        && data.description is string[m
+[31m-        && data.description.size() >= 12[m
+[31m-        && data.description.size() <= 500[m
+[31m-        && data.creatorUid is string[m
+[31m-        && data.creatorName is string[m
+[31m-        && data.creatorName.size() <= 80[m
+[31m-        && data.visibility == 'public'[m
+[31m-        && data.memberCount is int[m
+[31m-        && data.memberCount >= 1[m
+[31m-        && data.updatedAt == request.time;[m
+[31m-    }[m
+[31m-[m
+[31m-    function validPost(data, postType) {[m
+[31m-      return data.keys().hasOnly([[m
+[31m-          'type',[m
+[31m-          'text',[m
+[31m-          'audience',[m
+[31m-          'groupId',[m
+[31m-          'status',[m
+[31m-          'createdAt',[m
+[31m-          'updatedAt',[m
+[31m-          'authorUid',[m
+[31m-          'authorName',[m
+[31m-          'authorPhotoURL',[m
+[31m-          'anonymous'[m
+[31m-        ])[m
+[31m-        && data.keys().hasAll([[m
+[31m-          'type',[m
+[31m-          'text',[m
+[31m-          'audience',[m
+[31m-          'groupId',[m
+[31m-          'status',[m
+[31m-          'createdAt',[m
+[31m-          'updatedAt'[m
+[31m-        ])[m
+[31m-        && data.type == postType[m
+[31m-        && data.text is string[m
+[31m-        && data.text.size() >= 4[m
+[31m-        && data.text.size() <= 3000[m
+[31m-        && data.audience in ['public', 'group', 'private'][m
+[31

@@ -6,6 +6,13 @@ export const metadata = {
   description: "Find community in every prayer."
 };
 
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#f4f8f5"
+};
+
 export default function RootLayout({ children }) {
   return (
     <html lang="en">

@@ -45,13 +45,24 @@
 html {
   min-width: 320px;
   scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
-  min-height: 100vh;
+  min-height: 100vh; /* fallback for older browsers */
+  min-height: 100dvh;
   margin: 0;
+  overflow-x: clip; /* safety net against sideways scrolling */
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
   background: #f5f7f3;
   color: #1d2e27;
+}
+
+img,
+svg,
+video {
+  max-width: 100%;
 }
 
 button,
@@ -86,10 +97,11 @@ button,
 
 .auth-page {
   display: grid;
-  min-height: 100vh;
+  min-height: 100vh; /* fallback */
+  min-height: 100dvh;
   place-items: center;
   padding: 2rem 1.25rem;
-  overflow: hidden;
+  overflow-x: clip; /* was: overflow: hidden, which could cut off the card */
   background:
     radial-gradient(ellipse at 10% 8%, rgb(211 238 228 / 80%), transparent 34%),
     radial-gradient(ellipse at 92% 88%, rgb(244 227 197 / 52%), transparent 30%),
@@ -173,8 +185,11 @@ button,
   transition: background 160ms ease, color 160ms ease, transform 160ms ease;
 }
 
-.dashboard-nav-link:hover .dashboard-nav-icon {
-  transform: translateY(-1px);
+/* Only lift on devices that truly hover, so taps on touch screens don't stick */
+@media (hover: hover) {
+  .dashboard-nav-link:hover .dashboard-nav-icon {
+    transform: translateY(-1px);
+  }
 }
 
 .dashboard-nav-link[aria-current="page"] .dashboard-nav-icon {
@@ -202,6 +217,16 @@ button,
 
   .auth-card {
     width: 100%;
+  }
+}
+
+/* 16px inputs stop iOS from zooming the page on focus */
+@media (max-width: 640px) {
+  input,
+  select,
+  textarea,
+  .auth-input {
+    font-size: 16px;
   }
 }
 

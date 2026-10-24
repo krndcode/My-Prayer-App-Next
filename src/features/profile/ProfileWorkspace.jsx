@@ -43,6 +43,10 @@ const NOTIFICATION_DEFAULTS = {
 };
 const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
 const MAX_AVATAR_DIMENSION = 1280;
+const ALLOWED_AVATAR_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+const STORAGE_SETUP_MESSAGE =
+  "The profile photo upload couldn't reach its Firebase Storage bucket. In Firebase Console, open Storage and select Get started, then verify NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET matches the bucket and deploy the Storage rules.";
 
 function getError(error) {
   if (error.code === "permission-denied") return "You don't have permission to update this profile.";
@@ -53,39 +57,80 @@ function getError(error) {
     "storage/project-not-found",
     "storage/retry-limit-exceeded"
   ].includes(error.code)) {
-    return "The profile photo upload couldn't reach its Firebase Storage bucket. In Firebase Console, open Storage and select Get started, then verify NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET matches the bucket and deploy the Storage rules.";
+    return STORAGE_SETUP_MESSAGE;
   }
   if (error.code === "storage/unknown" && /bucket|not found|cors|network/i.test(error.message || "")) {
-    return "The profile photo upload couldn't reach its Firebase Storage bucket. In Firebase Console, open Storage and select Get started, then verify NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET matches the bucket and deploy the Storage rules.";
+    return STORAGE_SETUP_MESSAGE;
   }
   if (error.code === "storage/canceled") return "The profile photo upload was canceled.";
   if (error.code === "auth/requires-recent-login") return "For your security, sign in again before changing this setting.";
   return error.message || "The change could not be saved. Please try again.";
 }
 
-async function prepareAvatar(file) {
-  const bitmap = await createImageBitmap(file);
+// Decodes the chosen file. Uses createImageBitmap when available and falls back to an <img>
+// element, which older mobile browsers handle better.
+async function loadImage(file) {
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bitmap = await createImageBitmap(file);
+      return {
+        source: bitmap,
+        width: bitmap.width,
+        height: bitmap.height,
+        close: () => bitmap.close?.()
+      };
+    } catch {
+      // fall through to the <img> fallback
+    }
+  }
+  const url = URL.createObjectURL(file);
   try {
-    const scale = Math.min(1, MAX_AVATAR_DIMENSION / Math.max(bitmap.width, bitmap.height));
+    const image = await new Promise((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error("This image couldn't be read. Try a different photo."));
+      element.src = url;
+    });
+    return {
+      source: image,
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+      close: () => URL.revokeObjectURL(url)
+    };
+  } catch (loadError) {
+    URL.revokeObjectURL(url);
+    throw loadError;
+  }
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
+}
+
+async function prepareAvatar(file) {
+  const image = await loadImage(file);
+  try {
+    const scale = Math.min(1, MAX_AVATAR_DIMENSION / Math.max(image.width, image.height));
     const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    canvas.width = Math.max(1, Math.round(image.width * scale));
+    canvas.height = Math.max(1, Math.round(image.height * scale));
     const context = canvas.getContext("2d");
     if (!context) throw new Error("Your browser couldn't prepare this photo. Try another image.");
-    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise((resolve, reject) => {
-      canvas.toBlob(
-        (result) => result ? resolve(result) : reject(new Error("Your photo couldn't be compressed. Try another image.")),
-        "image/webp",
-        0.82
-      );
-    });
+    context.drawImage(image.source, 0, 0, canvas.width, canvas.height);
+
+    // Some browsers (notably Safari) can't encode WebP and silently return a large PNG instead.
+    // In that case, encode as JPEG so the file stays small.
+    let blob = await canvasToBlob(canvas, "image/webp", 0.82);
+    if (!blob || blob.type !== "image/webp") {
+      blob = await canvasToBlob(canvas, "image/jpeg", 0.85);
+    }
+    if (!blob) throw new Error("Your photo couldn't be compressed. Try another image.");
     if (blob.size > MAX_AVATAR_SIZE) {
       throw new Error("This photo is still over 5 MB after resizing. Choose a smaller image.");
     }
     return blob;
   } finally {
-    bitmap.close();
+    image.close();
   }
 }
 
@@ -98,11 +143,19 @@ export default function ProfileWorkspace() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [avatarBroken, setAvatarBroken] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [updatingPush, setUpdatingPush] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+
+  // Success messages fade away on their own so they never sit over content on small screens.
+  useEffect(() => {
+    if (!notice) return undefined;
+    const timer = setTimeout(() => setNotice(""), 5000);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   useEffect(() => {
     if (!user) return undefined;
@@ -170,15 +223,26 @@ export default function ProfileWorkspace() {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!user || !file) return;
-    const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
-    if (!allowedTypes.has(file.type)) {
-      setError("Choose a JPEG, PNG, or WebP image.");
+
+    // Some mobile browsers report an empty MIME type, so also check the file extension.
+    const extension = file.name?.split(".").pop()?.toLowerCase() || "";
+    const looksLikeImage =
+      ALLOWED_AVATAR_TYPES.has(file.type) ||
+      (!file.type && ["jpg", "jpeg", "png", "webp"].includes(extension));
+    if (!looksLikeImage) {
+      setError("Choose a JPEG, PNG, or WebP image. (HEIC photos need to be converted first.)");
       return;
     }
-    if (file.size > MAX_AVATAR_SIZE) {
-      setError("Profile photos must be 5 MB or smaller.");
+    if (file.size > MAX_AVATAR_SIZE * 4) {
+      // Large originals are fine because we resize them, but there's a sensible limit.
+      setError("That photo is too large. Choose an image under 20 MB.");
       return;
     }
+    if (!storage) {
+      setError("Firebase Storage isn't initialised. Check the storage export in lib/firebase.js and your Firebase environment variables.");
+      return;
+    }
+
     setUploading(true);
     setUploadProgress(0);
     setError("");
@@ -186,7 +250,7 @@ export default function ProfileWorkspace() {
     try {
       const image = await prepareAvatar(file);
       const avatarRef = ref(storage, `users/${user.uid}/profile/avatar.webp`);
-      const upload = uploadBytesResumable(avatarRef, image, { contentType: "image/webp" });
+      const upload = uploadBytesResumable(avatarRef, image, { contentType: image.type || "image/webp" });
       await new Promise((resolve, reject) => {
         upload.on(
           "state_changed",
@@ -195,13 +259,19 @@ export default function ProfileWorkspace() {
           resolve
         );
       });
-      const photoURL = await getDownloadURL(avatarRef);
+      const downloadURL = await getDownloadURL(avatarRef);
+      // The file path never changes, so add a version marker; otherwise the browser keeps showing the old photo.
+      const photoURL = `${downloadURL}${downloadURL.includes("?") ? "&" : "?"}v=${Date.now()}`;
       await updateProfile(user, { photoURL });
       await user.getIdToken(true);
       await updateDoc(doc(db, "users", user.uid), { photoURL, updatedAt: serverTimestamp() });
+      setAvatarBroken(false);
       setNotice("Your profile photo was updated.");
     } catch (uploadError) {
-      setError(getError(uploadError));
+      // The code in brackets (for example storage/unauthorized) makes problems much easier to diagnose.
+      console.error("Profile photo upload failed:", uploadError);
+      const code = uploadError?.code ? ` [${uploadError.code}]` : "";
+      setError(`${getError(uploadError)}${code}`);
     } finally {
       setUploading(false);
       setUploadProgress(0);
@@ -376,30 +446,36 @@ export default function ProfileWorkspace() {
   const initials = (profile.displayName || user.email || "M").slice(0, 1).toUpperCase();
 
   return (
-    <div>
+    <div className="min-w-0">
       <PageHeading
         eyebrow="Your account"
         title="Profile & preferences"
         description="Keep your details current and choose how you want to participate."
       />
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="space-y-5">
+      <div className="grid grid-cols-1 gap-5 sm:gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="min-w-0 space-y-5">
           <Panel>
             <div className="flex flex-wrap items-center gap-4">
-              {avatar ? (
+              {avatar && !avatarBroken ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={avatar} alt="" className="h-16 w-16 rounded-full object-cover ring-4 ring-teal-50" />
+                <img
+                  key={avatar}
+                  src={avatar}
+                  alt=""
+                  onError={() => setAvatarBroken(true)}
+                  className="h-16 w-16 shrink-0 rounded-full object-cover ring-4 ring-teal-50"
+                />
               ) : (
-                <span className="grid h-16 w-16 place-items-center rounded-full bg-teal-100 text-xl font-semibold text-teal-900 ring-4 ring-teal-50">
+                <span className="grid h-16 w-16 shrink-0 place-items-center rounded-full bg-teal-100 text-xl font-semibold text-teal-900 ring-4 ring-teal-50">
                   {initials}
                 </span>
               )}
-              <div className="flex-1">
-                <h2 className="text-lg font-semibold">{profile.displayName || "Your profile"}</h2>
-                <p className="mt-1 text-sm text-slate-600">{user.email}</p>
+              <div className="min-w-0 flex-1 basis-40">
+                <h2 className="truncate text-lg font-semibold">{profile.displayName || "Your profile"}</h2>
+                <p className="mt-1 break-all text-sm text-slate-600">{user.email}</p>
               </div>
-              <label className="cursor-pointer rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+              <label className="inline-flex min-h-11 w-full cursor-pointer items-center justify-center rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 focus-within:outline focus-within:outline-3 focus-within:outline-teal-500/50 sm:w-auto">
                 {uploading ? `Uploading ${uploadProgress}%…` : "Change photo"}
                 <input
                   type="file"
@@ -419,7 +495,9 @@ export default function ProfileWorkspace() {
                 <p className="mt-1 text-right text-xs text-slate-500">{uploadProgress}%</p>
               </div>
             )}
-            <p className="mt-4 text-xs text-slate-500">JPEG, PNG, or WebP. Maximum file size: 5 MB.</p>
+            <p className="mt-4 text-xs text-slate-500">
+              JPEG, PNG, or WebP. Large photos are resized automatically.
+            </p>
           </Panel>
 
           <Panel>
@@ -450,7 +528,7 @@ export default function ProfileWorkspace() {
                 maxLength={500}
                 defaultValue={profile.bio || ""}
               />
-              <PrimaryButton type="submit" disabled={saving}>
+              <PrimaryButton type="submit" disabled={saving} className="w-full sm:w-auto">
                 {saving ? "Saving…" : "Save profile"}
               </PrimaryButton>
             </form>
@@ -458,7 +536,7 @@ export default function ProfileWorkspace() {
 
           <Panel>
             <h2 className="text-lg font-semibold">Sign-in details</h2>
-            <p className="mt-1 text-sm text-slate-600">
+            <p className="mt-1 break-all text-sm text-slate-600">
               Current email: <span className="font-medium text-slate-800">{user.email}</span>
             </p>
             <form onSubmit={changeEmail} className="mt-4 flex flex-col gap-3 sm:flex-row">
@@ -474,16 +552,20 @@ export default function ProfileWorkspace() {
                   placeholder="New email address"
                 />
               </label>
-              <SecondaryButton type="submit" disabled={saving}>Change email</SecondaryButton>
+              <SecondaryButton type="submit" disabled={saving} className="w-full sm:w-auto sm:shrink-0">
+                Change email
+              </SecondaryButton>
             </form>
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
+            <div className="mt-4 flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-slate-600">A verified link is required to change your email.</p>
-              <SecondaryButton type="button" onClick={sendPasswordReset}>Send password reset link</SecondaryButton>
+              <SecondaryButton type="button" onClick={sendPasswordReset} className="w-full sm:w-auto sm:shrink-0">
+                Send password reset link
+              </SecondaryButton>
             </div>
           </Panel>
         </div>
 
-        <aside className="space-y-5">
+        <aside className="min-w-0 space-y-5">
           <Panel>
             <h2 className="text-lg font-semibold">Notification preferences</h2>
             <p className="mt-1 text-sm leading-6 text-slate-600">
@@ -542,20 +624,20 @@ export default function ProfileWorkspace() {
 
           <Panel>
             <div className="flex items-center justify-between gap-3">
-              <div>
+              <div className="min-w-0">
                 <h2 className="text-lg font-semibold">Your groups</h2>
                 <p className="mt-1 text-sm text-slate-600">Places where you pray together.</p>
               </div>
-              <span className="rounded-full bg-teal-50 px-3 py-1 text-xs font-semibold text-teal-800">
+              <span className="shrink-0 rounded-full bg-teal-50 px-3 py-1 text-xs font-semibold text-teal-800">
                 {groups.length}
               </span>
             </div>
             {groups.length > 0 ? (
               <ul className="mt-4 space-y-2">
                 {groups.map((group) => (
-                  <li key={group.id} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                    <span className="truncate font-medium text-slate-800">{group.name}</span>
-                    {group.role === "admin" && <span className="ml-2 text-xs text-amber-700">Admin</span>}
+                  <li key={group.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                    <span className="min-w-0 truncate font-medium text-slate-800">{group.name}</span>
+                    {group.role === "admin" && <span className="shrink-0 text-xs text-amber-700">Admin</span>}
                   </li>
                 ))}
               </ul>
@@ -591,7 +673,7 @@ export default function ProfileWorkspace() {
               <button
                 type="submit"
                 disabled={deleting}
-                className="rounded-xl bg-red-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-800 disabled:opacity-60"
+                className="min-h-11 w-full rounded-xl bg-red-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-800 disabled:opacity-60 sm:w-auto"
               >
                 {deleting ? "Deleting account…" : "Permanently delete account"}
               </button>
@@ -601,7 +683,7 @@ export default function ProfileWorkspace() {
       </div>
 
       {(error || notice) && (
-        <div className="fixed bottom-24 right-4 z-40 w-[min(92vw,420px)] lg:bottom-6">
+        <div className="fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] left-4 right-4 z-40 sm:left-auto sm:w-[420px] lg:bottom-6">
           <Notice tone={error ? "error" : "success"}>{error || notice}</Notice>
         </div>
       )}
@@ -616,7 +698,7 @@ function Preference({ label, description, checked, onChange }) {
         type="checkbox"
         checked={Boolean(checked)}
         onChange={(event) => onChange(event.target.checked)}
-        className="mt-1 h-4 w-4 accent-teal-800"
+        className="mt-1 h-4 w-4 shrink-0 accent-teal-800"
       />
       <span className="min-w-0">
         <span className="block text-sm font-medium text-slate-800">{label}</span>

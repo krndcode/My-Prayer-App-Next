@@ -101,7 +101,7 @@ export async function POST(request) {
       {
         error:
           process.env.NODE_ENV === "production"
-            ? "Unable to create a secure session."
+            ? "Unable to create a secure session. Check the Firebase Admin credentials configured for this deployment."
             : error.message || "Unable to create a secure session."
       },
       { status: 500 }
