@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   collection,
   collectionGroup,
@@ -42,22 +42,6 @@ function getDateTimeValue(timestamp) {
   return local.toISOString().slice(0, 16);
 }
 
-async function respondToInvitation(session, status) {
-  if (!user || !["accepted", "declined"].includes(status)) return;
-  setError("");
-  setNotice("");
-  try {
-    await updateDoc(doc(db, "prayerSchedules", session.id, "invitations", user.uid), {
-      status,
-      updatedAt: serverTimestamp()
-    });
-    setInvitationStatuses((current) => ({ ...current, [session.id]: status }));
-    setNotice(status === "accepted" ? "You accepted the prayer invitation." : "You declined the prayer invitation.");
-  } catch (invitationError) {
-    setError(getActionError(invitationError));
-  }
-}
-
 function toTimestamp(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) throw new Error("Choose a valid date and time.");
@@ -83,6 +67,21 @@ export default function ScheduleWorkspace() {
   const [editing, setEditing] = useState(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const formRef = useRef(null);
+
+  // Success messages fade away on their own so they never sit over content on small screens.
+  useEffect(() => {
+    if (!notice) return undefined;
+    const timer = setTimeout(() => setNotice(""), 5000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
+  // When the form opens (for example after tapping Edit far down the list), bring it into view.
+  useEffect(() => {
+    if (!showForm) return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    formRef.current?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+  }, [showForm, editing]);
 
   useEffect(() => {
     if (!user) return undefined;
@@ -333,11 +332,33 @@ export default function ScheduleWorkspace() {
     }
   }
 
+  // This used to be defined outside the component, where `user`, `setError`, `setNotice` and
+  // `setInvitationStatuses` don't exist, so tapping Accept or Decline threw a ReferenceError.
+  async function respondToInvitation(session, status) {
+    if (!user || !["accepted", "declined"].includes(status)) return;
+    setError("");
+    setNotice("");
+    try {
+      await updateDoc(doc(db, "prayerSchedules", session.id, "invitations", user.uid), {
+        status,
+        updatedAt: serverTimestamp()
+      });
+      setInvitationStatuses((current) => ({ ...current, [session.id]: status }));
+      setNotice(status === "accepted" ? "You accepted the prayer invitation." : "You declined the prayer invitation.");
+    } catch (invitationError) {
+      setError(getActionError(invitationError));
+    }
+  }
+
   if (authLoading || loading) return <LoadingState label="Loading your schedule…" />;
   if (!user) return <Notice>Please sign in again to open your schedule.</Notice>;
 
+  // One toast at a time: errors take priority, and form errors show inside the form instead.
+  const toastError = error && !showForm ? error : "";
+  const toastMessage = toastError || notice;
+
   return (
-    <div>
+    <div className="min-w-0">
       <PageHeading
         eyebrow="Make time to pray"
         title="Prayer schedule"
@@ -345,6 +366,7 @@ export default function ScheduleWorkspace() {
         action={
           <PrimaryButton
             type="button"
+            className="w-full sm:w-auto"
             onClick={() => {
               setEditing(null);
               setShowForm((value) => !value);
@@ -355,22 +377,24 @@ export default function ScheduleWorkspace() {
         }
       />
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_300px]">
-        <div className="space-y-5">
+      <div className="grid grid-cols-1 gap-5 sm:gap-6 xl:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="min-w-0 space-y-5">
           {showForm && (
-            <SessionForm
-              key={editing?.id || "new-session"}
-              editing={editing}
-              groups={groups}
-              user={user}
-              onError={setError}
-              onSave={saveSession}
-              onCancel={() => {
-                setEditing(null);
-                setShowForm(false);
-              }}
-              error={error}
-            />
+            <div ref={formRef} className="scroll-mt-24">
+              <SessionForm
+                key={editing?.id || "new-session"}
+                editing={editing}
+                groups={groups}
+                user={user}
+                onError={setError}
+                onSave={saveSession}
+                onCancel={() => {
+                  setEditing(null);
+                  setShowForm(false);
+                }}
+                error={error}
+              />
+            </div>
           )}
 
           {sortedSessions.length === 0 ? (
@@ -392,10 +416,10 @@ export default function ScheduleWorkspace() {
                 const invitationStatus = invitationStatuses[session.id];
                 return (
                 <Panel key={`${session.id}:${session.occurrenceIndex || 0}`} className={session.cancelled ? "opacity-65" : ""}>
-                    <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <h2 className="text-lg font-semibold text-slate-950">{session.title}</h2>
+                          <h2 className="min-w-0 break-words text-lg font-semibold text-slate-950">{session.title}</h2>
                           {session.cancelled && (
                             <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700">
                               Cancelled
@@ -416,11 +440,11 @@ export default function ScheduleWorkspace() {
                           {formatDate(session.startsAt)} · {session.durationMinutes} minutes
                         </p>
                         {session.description && (
-                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">
+                          <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600">
                             {session.description}
                           </p>
                         )}
-                        <p className="mt-3 text-xs text-slate-500">
+                        <p className="mt-3 break-words text-xs leading-5 text-slate-500">
                           {session.groupId
                             ? `Shared with ${groups.find((group) => group.id === session.groupId)?.name || "your prayer group"} · ${session.timeZone || "local time"}`
                             : invitationStatus
@@ -428,10 +452,12 @@ export default function ScheduleWorkspace() {
                               : `Private · ${session.timeZone || "local time"}`}
                         </p>
                       </div>
-                      <div className="flex flex-wrap gap-2">
+                      {/* Actions: full-width, evenly sized buttons on phones; compact and right-aligned from sm up */}
+                      <div className="flex flex-wrap gap-2 sm:max-w-[16rem] sm:shrink-0 sm:justify-end">
                         {(session.groupId || invitationStatus === "accepted") && !isCreator && !session.cancelled && (
                           <SecondaryButton
                             type="button"
+                            className="min-h-11 flex-1 sm:flex-none"
                             onClick={() => respond(session, status === "attending" ? "declined" : "attending")}
                           >
                             {status === "attending" ? "Attending ✓" : "I’ll attend"}
@@ -439,13 +465,17 @@ export default function ScheduleWorkspace() {
                         )}
                         {invitationStatus === "pending" && !isCreator && !session.cancelled && (
                           <>
-                            <SecondaryButton type="button" onClick={() => respondToInvitation(session, "accepted")}>
+                            <SecondaryButton
+                              type="button"
+                              className="min-h-11 flex-1 sm:flex-none"
+                              onClick={() => respondToInvitation(session, "accepted")}
+                            >
                               Accept invitation
                             </SecondaryButton>
                             <button
                               type="button"
                               onClick={() => respondToInvitation(session, "declined")}
-                              className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100"
+                              className="min-h-11 flex-1 rounded-xl px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 sm:flex-none"
                             >
                               Decline
                             </button>
@@ -458,6 +488,7 @@ export default function ScheduleWorkspace() {
                           <>
                             <SecondaryButton
                               type="button"
+                              className="min-h-11 flex-1 sm:flex-none"
                               onClick={() => {
                                 setEditing(sessions.find((entry) => entry.id === session.id) || session);
                                 setShowForm(true);
@@ -469,7 +500,7 @@ export default function ScheduleWorkspace() {
                             <button
                               type="button"
                               onClick={() => cancelSession(session)}
-                              className="rounded-xl px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50"
+                              className="min-h-11 flex-1 rounded-xl px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 sm:flex-none"
                             >
                               Cancel
                             </button>
@@ -483,7 +514,7 @@ export default function ScheduleWorkspace() {
             </div>
           )}
         </div>
-        <aside className="space-y-5">
+        <aside className="min-w-0 space-y-5">
           <Panel>
             <h2 className="text-base font-semibold">Your time zone</h2>
             <p className="mt-2 text-sm text-slate-600">
@@ -500,8 +531,11 @@ export default function ScheduleWorkspace() {
           </Panel>
         </aside>
       </div>
-      {notice && <div className="fixed bottom-24 right-4 z-40 w-[min(92vw,420px)] lg:bottom-6"><Notice tone="success">{notice}</Notice></div>}
-      {error && !showForm && <div className="fixed bottom-24 right-4 z-40 w-[min(92vw,420px)] lg:bottom-6"><Notice>{error}</Notice></div>}
+      {toastMessage && (
+        <div className="fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] left-4 right-4 z-40 sm:left-auto sm:w-[420px] lg:bottom-6">
+          {toastError ? <Notice>{toastError}</Notice> : <Notice tone="success">{notice}</Notice>}
+        </div>
+      )}
     </div>
   );
 }
@@ -549,7 +583,7 @@ function SessionForm({ editing, groups, user, onSave, onCancel, onError, error }
       <p className="mt-1 text-sm text-slate-600">
         {editing ? "Update the details for your session." : "Choose a time and, if you like, share it with one of your groups."}
       </p>
-      <form onSubmit={onSave} className="mt-5 grid gap-4 sm:grid-cols-2">
+      <form onSubmit={onSave} className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field
           id="session-title"
           name="title"
@@ -613,14 +647,14 @@ function SessionForm({ editing, groups, user, onSave, onCancel, onError, error }
           </SelectField>
         )}
         {sharingMode === "invite" && selectedGroupId && (
-          <fieldset className="space-y-2 sm:col-span-2">
+          <fieldset className="min-w-0 space-y-2 sm:col-span-2">
             <legend className="mb-2 text-sm font-medium text-slate-800">Select people to invite</legend>
             {members.length === 0 ? (
               <p className="text-sm text-slate-500">This group has no other members to invite.</p>
             ) : members.map((member) => (
-              <label key={member.uid} className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm">
-                <input type="checkbox" name="inviteeUids" value={member.uid} className="accent-teal-800" />
-                <span>{member.displayName || "Group member"}</span>
+              <label key={member.uid} className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-slate-200 px-3 py-2 text-sm">
+                <input type="checkbox" name="inviteeUids" value={member.uid} className="size-5 shrink-0 accent-teal-800" />
+                <span className="min-w-0 break-words">{member.displayName || "Group member"}</span>
               </label>
             ))}
           </fieldset>
@@ -640,15 +674,16 @@ function SessionForm({ editing, groups, user, onSave, onCancel, onError, error }
           id="session-recurrence-count"
           name="recurrenceCount"
           type="number"
+          inputMode="numeric"
           label="Occurrences, including the first"
           min={2}
           max={52}
           defaultValue={editing?.recurrence?.count || 4}
         />
         {error && <div className="sm:col-span-2"><Notice>{error}</Notice></div>}
-        <div className="flex flex-wrap gap-2 sm:col-span-2">
-          <PrimaryButton type="submit">{editing ? "Save changes" : "Schedule session"}</PrimaryButton>
-          <SecondaryButton type="button" onClick={onCancel}>Cancel</SecondaryButton>
+        <div className="flex flex-col-reverse gap-2 sm:col-span-2 sm:flex-row">
+          <SecondaryButton type="button" onClick={onCancel} className="w-full sm:w-auto">Cancel</SecondaryButton>
+          <PrimaryButton type="submit" className="w-full sm:w-auto">{editing ? "Save changes" : "Schedule session"}</PrimaryButton>
         </div>
       </form>
     </Panel>
